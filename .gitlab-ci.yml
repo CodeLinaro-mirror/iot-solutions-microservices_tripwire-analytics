@@ -1,0 +1,129 @@
+default:
+  image: docker:25.0.3-dind
+  tags:
+    - arm64-runner
+  before_script:
+    # Start Docker daemon inside the job container
+    - dockerd -l fatal &
+    - sleep 5
+
+variables:
+  # Kubernetes resources
+  KUBERNETES_CPU_REQUEST: "2"
+  KUBERNETES_MEMORY_REQUEST: "8G"
+  KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "32G"
+  KUBERNETES_POD_ANNOTATIONS_1: "MOUNT_EFS=/data"
+
+  # Docker image details
+  IMAGE_REGISTRY: artifacts.codelinaro.org
+  IMAGE_PATH: iot-solutions-microservices
+  
+  # Server image
+  SERVER_IMAGE_NAME: tripwire-analytics-server
+  SERVER_IMAGE_TAG: 1.0.0
+  SERVER_FULL_IMAGE_NAME: "${IMAGE_REGISTRY}/${IMAGE_PATH}/${SERVER_IMAGE_NAME}:${SERVER_IMAGE_TAG}"
+  SERVER_FULL_IMAGE_LATEST: "${IMAGE_REGISTRY}/${IMAGE_PATH}/${SERVER_IMAGE_NAME}:latest"
+
+  # API image
+  API_IMAGE_NAME: tripwire-analytics-api
+  API_IMAGE_TAG: 1.0.0
+  API_FULL_IMAGE_NAME: "${IMAGE_REGISTRY}/${IMAGE_PATH}/${API_IMAGE_NAME}:${API_IMAGE_TAG}"
+  API_FULL_IMAGE_LATEST: "${IMAGE_REGISTRY}/${IMAGE_PATH}/${API_IMAGE_NAME}:latest"
+
+  DOCKER_BUILDKIT: "1"
+  TARGET_ARCH: "linux/arm64"
+
+  # ---------------------------------------------------------
+  # Source fetch details (CodeLinaro GitLab)
+  # ---------------------------------------------------------
+  SOLUTIONS_MICROSERVICES_REPO_URL: "https://git.codelinaro.org/clo/le/solutions-microservices.git"
+  SOLUTIONS_MICROSERVICES_BRANCH: "iot-solutions.lnx.1.0"
+  SOLUTIONS_MICROSERVICES_COMMIT: "f4bd6cd6144f59cdffedf6a49277cd565d818e53"
+  TRIPWIRE_SOURCE_PATH: microservices/analytics/tripwire-analytics
+  SERVER_SRC_DIR: "tripwire-analytics-server"
+  API_SRC_DIR: "tripwire-analytics-api"
+
+stages:
+  - build
+  - test
+
+
+# ---------------------------------------------------------
+# Build & push the image
+# ---------------------------------------------------------
+build-image:
+  stage: build
+  script:
+    - echo "Checking Docker daemon"
+    - docker version
+    - docker info
+
+    - echo "Logging into JFrog Docker registry"
+    - echo "$JFROG_PASSWORD" | docker login -u "$JFROG_USERNAME" --password-stdin "$IMAGE_REGISTRY"
+
+    - echo "Cloning solutions-microservices from CodeLinaro"
+    - rm -rf solutions-microservices
+    - git clone --no-tags --single-branch --branch "${SOLUTIONS_MICROSERVICES_BRANCH}" "${SOLUTIONS_MICROSERVICES_REPO_URL}" solutions-microservices
+    - cd solutions-microservices
+    - git fetch --depth 1 origin "${SOLUTIONS_MICROSERVICES_COMMIT}"
+    - git checkout "${SOLUTIONS_MICROSERVICES_COMMIT}"
+    - git rev-parse HEAD
+
+    # Build Server
+    - echo "Building Tripwire Analytics Server Docker Image (ARM64)"
+    - echo $SERVER_FULL_IMAGE_NAME
+    - cd $CI_PROJECT_DIR/solutions-microservices/${TRIPWIRE_SOURCE_PATH}/${SERVER_SRC_DIR}
+    - ls -al
+    - grep -a -n "intensity_levels = " ./app/tripwire_analytics.py
+    - sed -i '452c\    intensity_levels = ""' ./app/tripwire_analytics.py
+    - grep -a -n "intensity_levels = " ./app/tripwire_analytics.py
+    - docker build --platform ${TARGET_ARCH} -t "$SERVER_FULL_IMAGE_NAME" .
+
+    - echo "Tagging the just-built image as :latest"
+    - docker tag "${SERVER_FULL_IMAGE_NAME}" "${SERVER_FULL_IMAGE_LATEST}"
+
+    - echo "Pushing server image to Artifactory"
+    - docker push "$SERVER_FULL_IMAGE_NAME"
+
+    - echo "Pushing :latest tag to Artifactory"
+    - docker push "$SERVER_FULL_IMAGE_LATEST"
+
+    # Build API
+    - echo "Building Tripwire Analytics API Docker Image (ARM64)"
+    - echo $API_FULL_IMAGE_NAME
+    - cd $CI_PROJECT_DIR/solutions-microservices/${TRIPWIRE_SOURCE_PATH}/${API_SRC_DIR} && docker build --platform ${TARGET_ARCH} -t "$API_FULL_IMAGE_NAME" .
+
+    - echo "Tagging the just-built image as :latest"
+    - docker tag "${API_FULL_IMAGE_NAME}" "${API_FULL_IMAGE_LATEST}"
+
+    - echo "Pushing API image to Artifactory"
+    - docker push "$API_FULL_IMAGE_NAME"
+
+    - echo "Pushing :latest tag to Artifactory"
+    - docker push "$API_FULL_IMAGE_LATEST"
+
+# ---------------------------------------------------------
+# Use the built server image inside CI
+# ---------------------------------------------------------
+
+test-with-server-image:
+  stage: test
+  script:
+    - echo "Logging into JFrog"
+    - echo "$JFROG_PASSWORD" | docker login -u "$JFROG_USERNAME" --password-stdin artifacts.codelinaro.org
+
+    - echo "Running container from built server image"
+    - docker run --rm --entrypoint sh -v /data:/data "$SERVER_FULL_IMAGE_NAME" -c "uname -a && cat /etc/os-release && df -h /data"
+
+# ---------------------------------------------------------
+# Use the built API image inside CI
+# ---------------------------------------------------------
+
+test-with-api-image:
+  stage: test
+  script:
+    - echo "Logging into JFrog"
+    - echo "$JFROG_PASSWORD" | docker login -u "$JFROG_USERNAME" --password-stdin artifacts.codelinaro.org
+
+    - echo "Running container from built API image"
+    - docker run --rm --entrypoint sh -v /data:/data "$API_FULL_IMAGE_NAME" -c "uname -a && cat /etc/os-release && df -h /data"
