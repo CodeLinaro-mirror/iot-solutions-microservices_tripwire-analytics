@@ -38,7 +38,7 @@ variables:
   # ---------------------------------------------------------
   SOLUTIONS_MICROSERVICES_REPO_URL: "https://git.codelinaro.org/clo/le/solutions-microservices.git"
   SOLUTIONS_MICROSERVICES_BRANCH: "iot-solutions.lnx.1.0"
-  SOLUTIONS_MICROSERVICES_COMMIT: "f4bd6cd6144f59cdffedf6a49277cd565d818e53"
+  SOLUTIONS_MICROSERVICES_COMMIT: "283887d199ec5a52519e389ffb6df5c3203ea81b"
   TRIPWIRE_SOURCE_PATH: microservices/analytics/tripwire-analytics
   SERVER_SRC_DIR: "tripwire-analytics-server"
   API_SRC_DIR: "tripwire-analytics-api"
@@ -73,10 +73,6 @@ build-image:
     - echo "Building Tripwire Analytics Server Docker Image (ARM64)"
     - echo $SERVER_FULL_IMAGE_NAME
     - cd $CI_PROJECT_DIR/solutions-microservices/${TRIPWIRE_SOURCE_PATH}/${SERVER_SRC_DIR}
-    - ls -al
-    - grep -a -n "intensity_levels = " ./app/tripwire_analytics.py
-    - sed -i '452c\    intensity_levels = ""' ./app/tripwire_analytics.py
-    - grep -a -n "intensity_levels = " ./app/tripwire_analytics.py
     - docker build --platform ${TARGET_ARCH} -t "$SERVER_FULL_IMAGE_NAME" .
 
     - echo "Tagging the just-built image as :latest"
